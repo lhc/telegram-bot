@@ -418,7 +418,7 @@ func mostraGrana(chat telebot.Chat, bot *telebot.Bot) {
 	if income > expenses {
 		msg = fmt.Sprintf("Temos fluxo positivo de caixa esse mês!🎉 Recebemos R$%.2f de R$%.2f", income, expenses)
 	} else {
-		msg = fmt.Sprintf("Este mês recebemos R$%.2f de R$%.2f💸.\n\n%s", income, expenses, progressBar(income, expenses))
+		msg = fmt.Sprintf("Este mês recebemos R$%.2f de R$%.2f💸.\n\n%s\n\nAjude a fechar as contas do mês [fazendo uma doação via PayPal](http://bit.ly/doe-para-o-lhc).", income, expenses, progressBar(income, expenses))
 	}
 
 	bot.SendMessage(chat, msg, nil)
