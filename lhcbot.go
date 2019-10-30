@@ -421,7 +421,9 @@ func mostraGrana(chat telebot.Chat, bot *telebot.Bot) {
 		msg = fmt.Sprintf("Este mês recebemos R$%.2f de R$%.2f💸.\n\n%s\n\nAjude a fechar as contas do mês [fazendo uma doação via PayPal](http://bit.ly/doe-para-o-lhc).", income, expenses, progressBar(income, expenses))
 	}
 
-	bot.SendMessage(chat, msg, nil)
+	bot.SendMessage(chat, msg, &telebot.SendOptions{
+		ParseMode: "Markdown",
+	})
 }
 
 var ultimoMesMonitorGrana *time.Time
