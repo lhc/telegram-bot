@@ -191,6 +191,8 @@ func diaDaSemana(weekday time.Weekday) string {
 }
 
 func imprimeEvento(chat telebot.Chat, bot *telebot.Bot, event *ics.Event, agora time.Time) bool {
+	log.Printf("Evento: %q", event)
+
 	if event.GetStart().Before(agora) {
 		return false
 	}
@@ -199,19 +201,24 @@ func imprimeEvento(chat telebot.Chat, bot *telebot.Bot, event *ics.Event, agora 
 	} else {
 		var proximoEvento string
 
+		//location := event.GetLocation()
+
+		title := event.GetSummary()
+		hour := fmt.Sprintf("às %02d:%02d", event.GetStart().Hour(), event.GetStart().Minute())
+
 		if event.GetStart().YearDay() == agora.YearDay() && event.GetStart().Year() == agora.Year() {
-			proximoEvento = fmt.Sprintf("Hoje tem \"%s\" às %02d:%02d",
-				event.GetSummary(),
-				event.GetStart().Hour(), event.GetStart().Minute())
+			proximoEvento = fmt.Sprintf("Hoje tem \"%s\"%s", title, hour)
 		} else {
-			proximoEvento = fmt.Sprintf("Vai rolar \"%s\" no dia %02d/%02d (%s) às %02d:%02d",
-				event.GetSummary(),
+			proximoEvento = fmt.Sprintf("Vai rolar \"%s\" no dia %02d/%02d (%s)%s",
+				title,
 				event.GetStart().Day(),
 				event.GetStart().Month(),
 				diaDaSemana(event.GetStart().Weekday()),
-				event.GetStart().Hour(), event.GetStart().Minute())
+				hour)
 		}
-		bot.SendMessage(chat, proximoEvento, nil)
+		bot.SendMessage(chat, proximoEvento, &telebot.SendOptions{
+			ParseMode: "Markdown",
+		})
 	}
 	return true
 }
@@ -219,6 +226,8 @@ func imprimeEvento(chat telebot.Chat, bot *telebot.Bot, event *ics.Event, agora 
 func processaIcs(chat telebot.Chat, bot *telebot.Bot, agora time.Time, url string) bool {
 	parser := ics.New()
 	defer parser.Wait()
+
+	log.Printf("Tentando ler iCal: %q", url)
 
 	parser.GetInputChan() <- url
 	for event := range parser.GetOutputChan() {
@@ -238,6 +247,8 @@ func paraDataHora(data, hora time.Time) time.Time {
 }
 
 func processaRecorrente(chat telebot.Chat, bot *telebot.Bot, agora time.Time) bool {
+	log.Printf("Tentando pegar eventos recorrentes no wiki")
+
 	// * [[Oficina de Computacao Cognitiva]] ''12/09/2017 das 19:00 às 22:30: Oficina com IBM Bluemix''
 	eventoRe := regexp.MustCompile(`^\s*\*\s*\[\[([\p{Latin}\s|_0-9/]+)\]\]\s*\'\'(\d{1,2}/\d{1,2}/\d{4})[\p{Latin}\s]+(\d{1,2}:\d{1,2})[\p{Latin}\s]+(\d{1,2}:\d{1,2})[:\s-]*([\p{Latin}\s]+)?\'\'`)
 
@@ -291,7 +302,7 @@ func pegaEventoTimeout(f func() bool) bool {
 	select {
 	case res := <-c:
 		return res
-	case <-time.After(3 * time.Second):
+	case <-time.After(10 * time.Second):
 		return false
 	}
 }
@@ -381,10 +392,17 @@ func pegaGrana() (float64, float64, error) {
 		return 0, 0, err
 	}
 
-	expenses, err := strconv.ParseFloat(financas.RegularExpensesEstimate, 64)
+	expensesEst, err := strconv.ParseFloat(financas.RegularExpensesEstimate, 64)
 	if err != nil {
 		return 0, 0, err
 	}
+
+	expensesAct, err := strconv.ParseFloat(financas.ActualExpenses, 64)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	expenses := expensesAct + expensesEst
 
 	return income, expenses, nil
 }
@@ -398,9 +416,9 @@ func mostraGrana(chat telebot.Chat, bot *telebot.Bot) {
 
 	msg := ""
 	if income > expenses {
-		msg = fmt.Sprintf("Temos fluxo positivo de caixa esse mês! Recebemos R$%.2f de %%.2f", income, expenses)
+		msg = fmt.Sprintf("Temos fluxo positivo de caixa esse mês!🎉 Recebemos R$%.2f de R$%.2f", income, expenses)
 	} else {
-		msg = fmt.Sprintf("Este mês recebemos R$%.2f de R$%.2f.\n\n%s", income, expenses, progressBar(income, expenses))
+		msg = fmt.Sprintf("Este mês recebemos R$%.2f de R$%.2f💸.\n\n%s", income, expenses, progressBar(income, expenses))
 	}
 
 	bot.SendMessage(chat, msg, nil)
@@ -409,12 +427,16 @@ func mostraGrana(chat telebot.Chat, bot *telebot.Bot) {
 var ultimoMesMonitorGrana *time.Time
 
 func monitoraGrana(chat telebot.Chat, bot *telebot.Bot) {
+	log.Printf("Pegando informacoes sobre grana pra saber se tá tudo de buenas esse mês")
+
 	income, expenses, err := pegaGrana()
 	if err != nil {
+		log.Printf("Nao consegui pegar grana pra monitorar: %v", err)
 		return
 	}
 
 	if income < expenses {
+		log.Printf("Income (%f) < Expense (%f)", income, expenses)
 		return
 	}
 
@@ -422,6 +444,10 @@ func monitoraGrana(chat telebot.Chat, bot *telebot.Bot) {
 	if ultimoMesMonitorGrana == nil || ultimoMesMonitorGrana.Month() != t.Month() || ultimoMesMonitorGrana.Year() != t.Year() {
 		ultimoMesMonitorGrana = &t
 		bot.SendMessage(chat, "🎉 Conseguimos a grana pra manter o LHC aberto esse mês!  Mais detalhes: /grana", nil)
+	} else {
+		log.Printf("ano=<anterior %q, atual %q>, mes=<anterior %q, atual %q>",
+			ultimoMesMonitorGrana.Month(), t.Month(),
+			ultimoMesMonitorGrana.Year(), t.Year())
 	}
 }
 
@@ -449,7 +475,12 @@ func main() {
 		log.Fatalf("Could not load location for timezone purposes")
 	}
 
-	dest := telebot.Chat{config.GroupId, telebot.ChatType(config.GroupType), config.GroupName, "", "", ""}
+	var dest telebot.Chat
+	dest.ID = config.GroupId
+	dest.Title = config.GroupType
+	dest.FirstName = config.GroupName
+
+	go monitoraGrana(dest, bot)
 
 	for {
 		select {
@@ -494,6 +525,10 @@ func main() {
 				bot.SendMessage(message.Chat, url, nil)
 			} else if strings.HasPrefix(message.Text, "/grana") {
 				go mostraGrana(message.Chat, bot)
+			} else if strings.HasPrefix(message.Text, "/quém") {
+				bot.SendMessage(message.Chat, "🦆", nil)
+			} else if strings.HasPrefix(message.Text, "/boo") {
+				bot.SendMessage(message.Chat, "👻", nil)
 			} else if strings.HasPrefix(message.Text, "/quem") {
 				go func(chat telebot.Chat, bot *telebot.Bot) {
 					who, err := fetchWho()
@@ -510,7 +545,11 @@ func main() {
 							msg = "Não tem nenhuma pessoa conhecida lá"
 						}
 						if who.UnknownMacs == 1 {
-							msg = msg + ". Mais uma pessoa desconhecida"
+							if len(who.Who) > 0 && rand.Int31n(100) > 50 {
+								msg = msg + ". Mais um gato🐈, provavelmente"
+							} else {
+								msg = msg + ". Mais uma pessoa desconhecida"
+							}
 						} else if who.UnknownMacs > 1 {
 							msg = msg + fmt.Sprintf(". Mais %d pessoas desconhecidas", who.UnknownMacs)
 						}
@@ -542,7 +581,11 @@ func main() {
 				if err != nil {
 					msg = "Não entendi a quantidade de pizzas: " + message.Text
 				} else if n_pessoas >= 1 && n_pessoas <= 100 {
-					msg = fmt.Sprintf("Para %.0f pessoas, compre %.0f pizzas de 8 🍕.", n_pessoas, pizzaPorPessoa(n_pessoas, 8))
+					if n_pessoas >= 3.14 && n_pessoas <= 3.14159265 {
+						msg = fmt.Sprintf("Para π pessoas, compre %.0f π-zzas de 8 🍕.", pizzaPorPessoa(n_pessoas, 8))
+					} else {
+						msg = fmt.Sprintf("Para %.0f pessoas, compre %.0f pizzas de 8 🍕.", n_pessoas, pizzaPorPessoa(n_pessoas, 8))
+					}
 
 					/* Promoções */
 					/* Promoções ainda válidas?
@@ -555,10 +598,10 @@ func main() {
 
 					/* Opções de pizza além das promoções */
 					if n_pessoas > 7 {
-						msg = msg + " Para a quantidade de pessoas, também tem a pizza de 60cm da http://mpizza.com.br/: "
+						msg = msg + " Para a quantidade de pessoas, também tem a pizza de 60cm da [Mega Pizza](http://mpizza.com.br/): "
 						msg = msg + fmt.Sprintf("cada uma tem 22 pedaços, então recomendo pedir %.0f mega pizzas.", pizzaPorPessoa(n_pessoas, 22))
 					} else {
-						msg = msg + " Uma opção é pedir na Penedos e pegar um imã/pizza. 8 deles trocam por uma pizza: http://penedos.com.br/catalog ou ligue 3396-5002."
+						msg = msg + " Uma opção é pedir na [Penedos](http://penedos.com.br/catalog) ([3396-5002](tel:+551933965002)) e pegar um imã/pizza. 8 deles trocam por uma pizza."
 					}
 				} else if n_pessoas == 0 {
 					msg = "Para nenhuma pessoa, é melhor nem comprar pizza"
@@ -569,6 +612,7 @@ func main() {
 				}
 
 				bot.SendMessage(message.Chat, msg, &telebot.SendOptions{
+					ParseMode: "Markdown",
 					ReplyMarkup: telebot.ReplyMarkup{
 						HideCustomKeyboard: true,
 					},
